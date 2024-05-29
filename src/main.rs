@@ -2,13 +2,13 @@ use gio::prelude::*;
 use glib::clone;
 use gtk4::prelude::*;
 use gtk4::{
-    Application, ApplicationWindow, Box, Button, Entry, FileChooserAction, FileChooserDialog,
+    Application, ApplicationWindow, Button, Entry, FileChooserAction, FileChooserDialog,
     Label, Orientation, ResponseType,
 };
-use std::cell::RefCell;
+// use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::rc::Rc;
+// use std::rc::Rc;
 
 mod save_data;
 
