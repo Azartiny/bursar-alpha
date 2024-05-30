@@ -5,11 +5,8 @@ use gtk4::{
     Application, ApplicationWindow, Button, Entry, FileChooserAction, FileChooserDialog,
     Label, Orientation, ResponseType,
 };
-// use std::cell::RefCell;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-// use std::rc::Rc;
-
 mod save_data;
 
 fn main() {
