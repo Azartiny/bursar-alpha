@@ -1,17 +1,28 @@
-use gio::prelude::*;
-use glib::clone;
+/*
+Версия GTK4 (desktop)
+ */
+#[warn(unused_imports)]
 use gtk4::prelude::*;
 use gtk4::{
-    Application, ApplicationWindow, Button, Entry, FileChooserAction, FileChooserDialog,
-    Label, Orientation, ResponseType,
+    Application, ApplicationWindow, Button, Entry, FileChooserAction, FileChooserDialog, Label,
+    Orientation, ResponseType,
 };
+use gio::prelude::*;
+use glib::clone;
+// use encoding_rs::WINDOWS_1251;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::str::FromStr;
+
+// mod decoder;
 mod save_data;
 
 fn main() {
     // Инициализация
-    let app = Application::new(Some("com.kaznachey.gtk4"), gio::ApplicationFlags::FLAGS_NONE);
+    let app = Application::new(
+        Some("com.kaznachey.gtk4"),
+        gio::ApplicationFlags::FLAGS_NONE,
+    );
 
     app.connect_activate(master_ui);
 
@@ -22,7 +33,7 @@ fn master_ui(app: &Application) {
     // Основное окно
     let window = ApplicationWindow::new(app);
     window.set_title(Some("Казначей альфа (демоверсия)"));
-    window.set_default_size(400, 200);
+    window.set_default_size(370, 200);
 
     let vbox = gtk4::Box::new(Orientation::Vertical, 12);
 
@@ -36,7 +47,7 @@ fn master_ui(app: &Application) {
 
     // Метка и поле ввода ФИО пользователя
     let hbox_klient = gtk4::Box::new(Orientation::Horizontal, 5);
-    let label_klient = Label::new(Some("Имя:"));
+    let label_klient = Label::new(Some("  Имя:"));
     let intro_klient = Entry::new();
 
     hbox_klient.append(&label_klient);
@@ -44,7 +55,7 @@ fn master_ui(app: &Application) {
 
     // ИНН ИП
     let hbox_inn = gtk4::Box::new(Orientation::Horizontal, 5);
-    let label_inn = Label::new(Some("ИНН:"));
+    let label_inn = Label::new(Some("  ИНН:"));
     let entry_inn = Entry::new();
 
     hbox_inn.append(&label_inn);
@@ -52,23 +63,21 @@ fn master_ui(app: &Application) {
 
     // Метки и поля ввода для A (Доход) и B (Фикса)
     let hbox_label_a = gtk4::Box::new(Orientation::Horizontal, 5);
-    let label_a = Label::new(Some("Доход:"));
+    let label_a = Label::new(Some("  Доход:"));
     let entry_a = Entry::new();
 
     hbox_label_a.append(&label_a);
     hbox_label_a.append(&entry_a);
 
     let hbox_label_b = gtk4::Box::new(Orientation::Horizontal, 5);
-    let label_b = Label::new(Some("Фикс:"));
+    let label_b = Label::new(Some("  Фикс:"));
     let entry_b = Entry::new();
 
     hbox_label_b.append(&label_b);
     hbox_label_b.append(&entry_b);
 
     // Метка Рассчитать
-    let label_result = Label::new(Some(
-        "Имя: \rИНН: \rБаза: \rНалог: \rСумма к выплате: \rFrom file:",
-    ));
+    let label_result = Label::new(Some("Имя: \rИНН: \rБаза: \rНалог: \rСумма к выплате:"));
 
     // Тестирую вариант расчета данных из файла. Кнопка открытия файла.
     choose_button.connect_clicked(clone!(@strong window, @strong label_choose_button => move |_| {
@@ -84,17 +93,27 @@ fn master_ui(app: &Application) {
                 if let Some(file_path) = dialog.file().and_then(|f| f.path()) {
                     match File::open(file_path) {
                         Ok(file) => {
-                            let total: f64 = BufReader::new(file)
-                                .lines()
-                                .filter_map(Result::ok)
-                                .filter_map(|line| {
-                                    line.split_whitespace()
-                                        .filter_map(|word| word.parse::<f64>().ok())
-                                        .next()
-                                })
-                                .sum();
-                            label_choose_button.set_text(&format!("Всего к оплате: {}", total));
+                              let total_sum: f64 = BufReader::new(file)
+                                    .lines()
+                                    .filter_map(Result::ok)
+                                    .filter_map(|line| {
+                                    line.strip_prefix("Сумма=")
+                                    .into_iter().filter_map(|value_str| f64::from_str(value_str.trim()).ok())
+                                    .next()
+                                    }).sum();
+                             label_choose_button.set_text(&format!("{} ₽", total_sum));
                         }
+                        //     let total: f64 = BufReader::new(file)
+                        //         .lines()
+                        //         .filter_map(Result::ok)
+                        //         .filter_map(|line| {
+                        //             line.trim().split_whitespace()
+                        //                 .filter_map(|word| word.parse::<f64>().ok()) //Выкидываем слова и считаем только числа построчно
+                        //                 .next()
+                        //         })
+                        //         .sum();
+                        //     label_choose_button.set_text(&format!("{} ₽", total_sum));
+                        // }
                         Err(err) => {
                             eprintln!("Error opening file: {}", err);
                             label_choose_button.set_text("Error opening file");
@@ -110,7 +129,8 @@ fn master_ui(app: &Application) {
 
     // Кнопка "Рассчитать"
     let calculate_button = Button::with_label("Рассчитать");
-    calculate_button.connect_clicked(clone!(@strong intro_klient, @strong entry_inn, @strong entry_a, @strong entry_b, @strong label_result => move |_| {
+    calculate_button.connect_clicked(clone!(@strong label_choose_button, @strong intro_klient, @strong entry_inn, @strong entry_a, @strong entry_b, @strong label_result => move |_| {
+        let total_fromfile = label_choose_button.text().to_string();
         let result_inn = entry_inn.text().to_string();
         let result_klient = intro_klient.text().to_string();
         let a: f64 = entry_a.text().parse().unwrap_or(0.0);
@@ -120,12 +140,14 @@ fn master_ui(app: &Application) {
         let ceiled_nalog_d = nalog_d.ceil(); // Округление в большую сторону до целого числа
         let payment: f64 = nalog_d + b; // Сумма к выплате (Налог + Фикс)
         let ceiled_payment = payment.ceil(); // Округление ceil
-        label_result.set_text(&format!("Имя: {} \rИНН: {} \rБаза: {} ₽\rНалог: {} ₽ \rСумма к выплате: {} ₽ \rPayment:", result_klient, result_inn, baza_c, ceiled_nalog_d, ceiled_payment));
+        // let all_totalpay= label_choose_button.set_text(&format!("Всего к оплате: {}", total));;
+        label_result.set_text(&format!("Имя: {} \rИНН: {} \rБаза: {} ₽\rНалог: {} ₽ \rСумма к выплате: {} ₽ \rДанные из файла: {}", result_klient, result_inn, baza_c, ceiled_nalog_d, ceiled_payment, total_fromfile));
     }));
 
     // Кнопка "Очистить"
     let clear_button = Button::with_label("Очистить");
-    clear_button.connect_clicked(clone!(@strong entry_inn, @strong entry_a, @strong entry_b, @strong intro_klient, @strong label_result => move |_| {
+    clear_button.connect_clicked(clone!(@strong label_choose_button, @strong entry_inn, @strong entry_a, @strong entry_b, @strong intro_klient, @strong label_result => move |_| {
+        label_choose_button.set_text("");
         entry_inn.set_text("");
         entry_a.set_text("");
         entry_b.set_text("");
@@ -135,13 +157,15 @@ fn master_ui(app: &Application) {
 
     // Кнопка "Сохранить файл"
     let save_button = Button::with_label("Сохранить файл");
-    save_button.connect_clicked(clone!(@strong intro_klient, @strong label_result => move |_| {
-        let text = label_result.text().as_str().to_string();
-        save_data::save_to_file(&text, "Отчёт.txt").expect("Не удалось сохранить данные");
-    }));
+    save_button.connect_clicked(
+        clone!(@strong label_choose_button, @strong intro_klient, @strong label_result => move |_| {
+            let text = label_result.text().as_str().to_string();
+            save_data::save_to_file(&text, "Отчёт.txt").expect("Не удалось сохранить данные");
+        }),
+    );
 
     // Добавляем все виджеты в контейнер
-    vbox.append(&hbox_choose_button); // Теперь добавляем полностью hbox_choose_button
+    vbox.append(&hbox_choose_button);
     vbox.append(&hbox_klient);
     vbox.append(&hbox_inn);
     vbox.append(&hbox_label_a);
