@@ -1,20 +1,15 @@
-/*
-Версия GTK4 (desktop)
- */
-#[warn(unused_imports)]
+
+use gio::prelude::*;
+use glib::clone;
 use gtk4::prelude::*;
 use gtk4::{
     Application, ApplicationWindow, Button, Entry, FileChooserAction, FileChooserDialog, Label,
     Orientation, ResponseType,
 };
-use gio::prelude::*;
-use glib::clone;
-// use encoding_rs::WINDOWS_1251;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader};
 use std::str::FromStr;
-
-// mod decoder;
+use std::error::Error;
 mod save_data;
 
 fn main() {
@@ -79,8 +74,99 @@ fn master_ui(app: &Application) {
     // Метка Рассчитать
     let label_result = Label::new(Some("Имя: \rИНН: \rБаза: \rНалог: \rСумма к выплате:"));
 
+    // Функция удаления строк с определёнными ключевыми словами
+    fn filter_lines(file_path: &str) -> Result<Vec<String>, Box<dyn Error>> {
+        let file = File::open(file_path)?;
+        let reader = BufReader::new(file);
+        let ignore_lines_words = vec![
+            "Номер=", "Дата=", "ПлательщикСчет=", "ДатаСписано=", "Плательщик1=",
+            "ПлательщикРасчСчет=", "ПлательщикБанк1=", "ПлательщикБанк2=", "ПлательщикБИК=",
+            "ПлательщикКорсчет=", "ПолучательСчет=", "ДатаПоступило=", "Получатель1=",
+            "ПолучательРасчСчет=", "ПолучательБанк1=", "ПолучательБанк2=", "ПолучательБИК=",
+            "ПолучательКорсчет=", "ВидПлатежа=", "ВидОплаты=", "Код=", "ПолучательКПП=",
+            "ПлательщикКПП=", "СрокПлатежа=", "Очередность=", "НазначениеПлатежа="
+        ];
+
+        let filtered_lines: Vec<String> = reader.lines()
+            .filter_map(|line| {
+                let line = line.ok()?;
+                if ignore_lines_words.iter().any(|&word| line.starts_with(word)) {
+                    None
+                } else {
+                    Some(line)
+                }
+            })
+            .collect();
+
+        Ok(filtered_lines)
+    }
+
+    // Функция обработки файла
+    fn process_file(lines: Vec<String>, user_inn: &str) -> Result<f64, Box<dyn Error>> {
+        let mut current_block: Vec<String> = Vec::new();
+        let mut sum = 0.0;
+        let mut ignore_block = false;
+        let mut in_block = false;
+
+        for line in lines {
+            let line = line.trim().to_string();
+            println!("Читаю строку: {}", &line); // Для отладки
+
+            if line.starts_with("СекцияДокумент=") {
+                in_block = true;
+                current_block.clear();
+                ignore_block = false;
+                println!("Начало блока"); // Для отладки
+            } else if line.starts_with("КонецДокумента") {
+                in_block = false;
+                println!("Конец блока"); // Для отладки
+
+                if !ignore_block {
+                    for item in &current_block {
+                        if let Some(value) = item.strip_prefix("Сумма=") {
+                            sum += value.trim().parse::<f64>()?;
+                            println!("Добавил {} к общей сумме", value); // Для отладки
+                        }
+                    }
+                }
+
+                current_block.clear();
+            }
+
+            if in_block {
+                current_block.push(line.clone());
+                println!("Добавил в текущий блок: {}", &line); // Для отладки
+
+                if line.starts_with("ПлательщикИНН=") || line.starts_with("ПолучательИНН=") {
+                    let parts: Vec<&str> = line.split('=').collect();
+                    if parts.len() == 2 && parts[1].trim() == user_inn {
+                        let other_field = if line.starts_with("ПлательщикИНН=") {
+                            "ПолучательИНН="
+                        } else {
+                            "ПлательщикИНН="
+                        };
+
+                        if let Some(other_inn_line) =
+                            current_block.iter().find(|&l| l.starts_with(other_field))
+                        {
+                            let other_parts: Vec<&str> = other_inn_line.split('=').collect();
+                            if other_parts.len() == 2 && other_parts[1].trim() == user_inn {
+                                ignore_block = true;
+                                println!("Игнорирую текущий блок"); // Для отладки
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(sum)
+    }
+
     // Тестирую вариант расчета данных из файла. Кнопка открытия файла.
-    choose_button.connect_clicked(clone!(@strong window, @strong label_choose_button => move |_| {
+    choose_button.connect_clicked(clone!(@strong window, @strong label_choose_button, @strong entry_inn => move |_| {
+        let user_inn = entry_inn.text().to_string();
+
         let file_chooser = FileChooserDialog::new(
             Some("Import file"),
             Some(&window),
@@ -88,35 +174,25 @@ fn master_ui(app: &Application) {
             &[("_Cancel", ResponseType::Cancel), ("_Open", ResponseType::Accept)],
         );
 
-        file_chooser.connect_response(clone!(@strong label_choose_button => move |dialog, response| {
+        file_chooser.connect_response(clone!(@strong label_choose_button, @strong user_inn => move |dialog, response| {
             if response == ResponseType::Accept {
                 if let Some(file_path) = dialog.file().and_then(|f| f.path()) {
-                    match File::open(file_path) {
-                        Ok(file) => {
-                              let total_sum: f64 = BufReader::new(file)
-                                    .lines()
-                                    .filter_map(Result::ok)
-                                    .filter_map(|line| {
-                                    line.strip_prefix("Сумма=")
-                                    .into_iter().filter_map(|value_str| f64::from_str(value_str.trim()).ok())
-                                    .next()
-                                    }).sum();
-                             label_choose_button.set_text(&format!("{} ₽", total_sum));
-                        }
-                        //     let total: f64 = BufReader::new(file)
-                        //         .lines()
-                        //         .filter_map(Result::ok)
-                        //         .filter_map(|line| {
-                        //             line.trim().split_whitespace()
-                        //                 .filter_map(|word| word.parse::<f64>().ok()) //Выкидываем слова и считаем только числа построчно
-                        //                 .next()
-                        //         })
-                        //         .sum();
-                        //     label_choose_button.set_text(&format!("{} ₽", total_sum));
-                        // }
+                    let file_path = file_path.to_str().unwrap();
+                    match filter_lines(file_path) {
+                        Ok(filtered_lines) => {
+                            match process_file(filtered_lines, &user_inn) {
+                                Ok(sum) => {
+                                    label_choose_button.set_text(&format!("{} ₽", sum));
+                                },
+                                Err(err) => {
+                                    println!("Ошибка обработки файла: {}", err);
+                                    label_choose_button.set_text("Ошибка обработки файла");
+                                }
+                            }
+                        },
                         Err(err) => {
-                            eprintln!("Error opening file: {}", err);
-                            label_choose_button.set_text("Error opening file");
+                            println!("Ошибка фильтрации строк: {}", err);
+                            label_choose_button.set_text("Ошибка фильтрации строк");
                         }
                     }
                 }
@@ -140,8 +216,7 @@ fn master_ui(app: &Application) {
         let ceiled_nalog_d = nalog_d.ceil(); // Округление в большую сторону до целого числа
         let payment: f64 = nalog_d + b; // Сумма к выплате (Налог + Фикс)
         let ceiled_payment = payment.ceil(); // Округление ceil
-        // let all_totalpay= label_choose_button.set_text(&format!("Всего к оплате: {}", total));;
-        label_result.set_text(&format!("Имя: {} \rИНН: {} \rБаза: {} ₽\rНалог: {} ₽ \rСумма к выплате: {} ₽ \rДанные из файла: {}", result_klient, result_inn, baza_c, ceiled_nalog_d, ceiled_payment, total_fromfile));
+        label_result.set_text(&format!("Имя: {} \rИНН: {} \rБаза: {} ₽ \rНалог: {} ₽ \rСумма к выплате: {} ₽ \rДанные из файла: {}", result_klient, result_inn, baza_c, ceiled_nalog_d, ceiled_payment, total_fromfile));
     }));
 
     // Кнопка "Очистить"
